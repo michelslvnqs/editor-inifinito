@@ -31,8 +31,12 @@ if __name__ == "__main__":
     # Verifica e instala dependência
     install_yt_dlp()
     
-    # Link fornecido
-    video_url = "https://www.youtube.com/watch?v=bpOSxM0rNPM"
+    # Link fornecido ou por argumento
+    if len(sys.argv) > 1:
+        video_url = sys.argv[1]
+    else:
+        print("Uso: python download_video.py <url_do_youtube>")
+        sys.exit(1)
     
     # Inicia o download
     download_video(video_url)
