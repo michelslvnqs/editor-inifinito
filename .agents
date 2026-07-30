@@ -10,7 +10,7 @@ Isso garante que o repositório na nuvem esteja sempre sincronizado com as últi
 Se você editar ou criar arquivos dentro da pasta `worker/` (como `src/index.ts`, `wrangler.toml` ou `schema.sql`), você DEVE fazer o deploy das alterações para a nuvem rodando:
 - `cd worker && npm run deploy`
 
-## Operador Python
-Se você editar o arquivo `operador.py` e ele já estiver rodando em background como uma tarefa, você DEVE, obrigatoriamente:
+## Editor Python
+Se você editar o arquivo `editor_video.py` e ele já estiver rodando em background como uma tarefa, você DEVE, obrigatoriamente:
 1. Usar a tool `manage_task` para dar `kill` no processo antigo.
-2. Iniciar novamente rodando `python -u operador.py`.
+2. Iniciar novamente rodando `python -u editor_video.py`.
