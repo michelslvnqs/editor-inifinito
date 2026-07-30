@@ -386,6 +386,12 @@ const htmlInterface = `
             box-shadow: 0 10px 20px rgba(0, 200, 83, 0.3);
             transition: all 0.3s;
         }
+        .download-btn.disabled {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-muted);
+            pointer-events: none;
+            box-shadow: none;
+        }
         .download-btn:hover {
             background: #00e676;
             transform: translateY(-2px);
@@ -410,8 +416,8 @@ const htmlInterface = `
 <body>
 
 <div class="container">
-    <h1>Infinity Cuts</h1>
-    <p class="subtitle">Cortes cirúrgicos na velocidade da luz.</p>
+    <h1>Editor Infinito</h1>
+    <p class="subtitle">Cortes perfeitos, sem limites e na velocidade da luz.</p>
 
     <div id="form-area">
         <div class="input-group">
@@ -446,16 +452,15 @@ const htmlInterface = `
             </div>
 
             <button id="btn-cortar" onclick="iniciarCorte()">✂️ Cortar e Exportar</button>
+            <a href="#" class="download-btn disabled" id="btn-download" style="display:block; text-align:center; cursor:default;" target="_blank">⬇️ Aguardando Corte...</a>
+            
+            <div id="status-area" style="display:none; text-align:center; margin-top:20px;">
+                <div class="progress-pill" id="status-pill">
+                    <div class="spinner" id="spinner"></div>
+                    <span id="status-text">Processando...</span>
+                </div>
+            </div>
         </div>
-    </div>
-
-    <div id="status-area">
-        <div class="progress-pill" id="status-pill">
-            <div class="spinner" id="spinner"></div>
-            <span id="status-text">Processando...</span>
-        </div>
-        <a href="#" class="download-btn" id="btn-download" style="display:none;" target="_blank">⬇️ Baixar Corte (MP4)</a>
-        <button class="cancel-btn" onclick="limparSessao()">Fazer outro corte</button>
     </div>
 </div>
 
@@ -630,6 +635,11 @@ const htmlInterface = `
         btn.disabled = true;
         btn.innerText = 'Enviando para o Operador...';
         
+        const btnDownload = document.getElementById('btn-download');
+        btnDownload.classList.add('disabled');
+        btnDownload.innerText = '⬇️ Aguardando Corte...';
+        btnDownload.href = '#';
+        
         if(loopInterval) clearInterval(loopInterval);
         if(player && player.pauseVideo) player.pauseVideo();
         document.getElementById('btn-testar').style.display = 'block';
@@ -670,8 +680,16 @@ const htmlInterface = `
     }
 
     function mostrarStatus() {
-        document.getElementById('form-area').style.display = 'none';
         document.getElementById('status-area').style.display = 'block';
+        const spinner = document.getElementById('spinner');
+        spinner.style.display = 'inline-block';
+        const btnCortar = document.getElementById('btn-cortar');
+        btnCortar.disabled = true;
+        
+        const pill = document.getElementById('status-pill');
+        pill.style.borderColor = 'var(--primary)';
+        pill.style.background = 'rgba(255, 51, 102, 0.1)';
+        document.getElementById('status-text').style.color = 'var(--primary)';
     }
 
     function marcarConcluido(r2_url, isCache) {
@@ -683,7 +701,12 @@ const htmlInterface = `
         const statusText = document.getElementById('status-text');
 
         spinner.style.display = 'none';
-        btnDownload.style.display = 'block';
+        btnDownload.classList.remove('disabled');
+        btnDownload.innerText = '⬇️ Baixar Corte (MP4)';
+        
+        const btnCortar = document.getElementById('btn-cortar');
+        btnCortar.disabled = false;
+        btnCortar.innerText = '✂️ Cortar e Exportar';
         
         pill.style.borderColor = '#00c853';
         pill.style.background = 'rgba(0, 200, 83, 0.1)';
@@ -709,6 +732,10 @@ const htmlInterface = `
         pill.style.borderColor = '#ff5252';
         pill.style.background = 'rgba(255,82,82,0.1)';
         statusText.innerText = '❌ Falha: ' + (erroMsg || 'Erro no processamento');
+        
+        const btnCortar = document.getElementById('btn-cortar');
+        btnCortar.disabled = false;
+        btnCortar.innerText = '✂️ Tentar Novamente';
     }
 
     function iniciarPolling(jobId) {
