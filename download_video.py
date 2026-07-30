@@ -16,7 +16,7 @@ def download_video(url):
     # O formato 'best[height<=720]' procura um arquivo que já tenha vídeo e áudio juntos até 720p
     ydl_opts = {
         'format': 'best[height<=720]',
-        'outtmpl': '%(title)s.%(ext)s',
+        'outtmpl': 'downloads/%(title)s.%(ext)s',
     }
     
     print(f"\nIniciando o download de: {url}")
