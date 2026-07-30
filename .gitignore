@@ -4,3 +4,8 @@ downloads/
 __pycache__/
 *.pyc
 *.pyo
+
+# Arquivos de Sistema e Editor
+.vscode/
+.env
+.DS_Store
