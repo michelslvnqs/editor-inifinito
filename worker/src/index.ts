@@ -31,17 +31,37 @@ export default {
             });
         }
 
+        // API: Fetch YouTube Info (Subtitles)
+        if (request.method === "GET" && url.pathname === "/api/info") {
+            const ytUrl = url.searchParams.get("url");
+            if (!ytUrl) return new Response("Missing url", { status: 400, headers: corsHeaders });
+            try {
+                const ytRes = await fetch(ytUrl);
+                const html = await ytRes.text();
+                const match = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
+                let subs: any[] = [];
+                if (match) {
+                    const json = JSON.parse(match[1]);
+                    const tracks = json.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+                    subs = tracks.map((t: any) => ({ code: t.languageCode, name: t.name.simpleText }));
+                }
+                return new Response(JSON.stringify({ subtitles: subs }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            } catch (e: any) {
+                return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: corsHeaders });
+            }
+        }
+
         // API: Criar pedido de corte (Deduplicação Inteligente)
         if (request.method === "POST" && url.pathname === "/api/videos") {
             try {
                 const body = await request.json() as any;
-                const { youtube_url, start_ms = 0, end_ms = 0 } = body;
+                const { youtube_url, start_ms = 0, end_ms = 0, subtitle_lang = null } = body;
                 if (!youtube_url) return new Response(JSON.stringify({ error: "youtube_url is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
                 
                 const youtube_id = extractYouTubeId(youtube_url);
                 if (!youtube_id) return new Response(JSON.stringify({ error: "URL do YouTube inválida" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-                const job_id = `${youtube_id}_${Math.floor(start_ms)}_${Math.floor(end_ms)}`;
+                const job_id = `${youtube_id}_${Math.floor(start_ms)}_${Math.floor(end_ms)}` + (subtitle_lang ? `_sub_${subtitle_lang}` : "");
 
                 // Verifica se já existe o mesmo corte
                 const row = await env.editor_jobs.prepare(
@@ -58,8 +78,8 @@ export default {
 
                 // Novo pedido de corte
                 await env.editor_jobs.prepare(
-                    "INSERT INTO cuts (job_id, youtube_id, start_ms, end_ms, status) VALUES (?, ?, ?, ?, ?)"
-                ).bind(job_id, youtube_id, start_ms, end_ms, "pendente").run();
+                    "INSERT INTO cuts (job_id, youtube_id, start_ms, end_ms, status, subtitle_lang) VALUES (?, ?, ?, ?, ?, ?)"
+                ).bind(job_id, youtube_id, start_ms, end_ms, "pendente", subtitle_lang).run();
 
                 return new Response(JSON.stringify({ job_id, status: "pendente" }), {
                     headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -430,6 +450,13 @@ const htmlInterface = `
                 <div id="player" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;"></div>
             </div>
             
+            <div class="input-group" id="subtitle-group" style="margin-bottom: 25px;">
+                <label>Legenda (Hardsub)</label>
+                <select id="subtitle-lang" style="width: 100%; padding: 12px; border-radius: 8px; background: rgba(0,0,0,0.5); border: 1px solid var(--glass-border); color: white; margin-top: 5px;">
+                    <option value="">Sem legenda</option>
+                </select>
+            </div>
+            
             <div class="input-group">
                 <label style="margin-bottom: 15px;">Ajuste o Trecho</label>
                 <div id="timeline" style="margin: 0 10px 25px 10px;"></div>
@@ -489,12 +516,32 @@ const htmlInterface = `
     };
 
     // Detecta colagem de link do YouTube
-    document.getElementById('url').addEventListener('input', function(e) {
+    document.getElementById('url').addEventListener('input', async function(e) {
         const val = e.target.value;
         const match = val.match(/(?:youtu\\.be\\/|youtube\\.com\\/(?:.*v=|.*\\/))([^&?]+)/);
         if(match && match[1]) {
             loadedUrl = val;
             loadVideo(match[1]);
+            
+            const subSelect = document.getElementById('subtitle-lang');
+            subSelect.innerHTML = '<option value="">Carregando legendas...</option>';
+            try {
+                const res = await fetch('/api/info?url=' + encodeURIComponent(val));
+                const data = await res.json();
+                subSelect.innerHTML = '<option value="">Sem legenda</option>';
+                if (data.subtitles && data.subtitles.length > 0) {
+                    data.subtitles.forEach(s => {
+                        const opt = document.createElement('option');
+                        opt.value = s.code;
+                        opt.innerText = s.name + ' (' + s.code + ')';
+                        subSelect.appendChild(opt);
+                    });
+                } else {
+                    subSelect.innerHTML = '<option value="">Nenhuma legenda encontrada</option>';
+                }
+            } catch(err) {
+                subSelect.innerHTML = '<option value="">Erro ao buscar legendas</option>';
+            }
         } else {
             document.getElementById('editor-area').style.display = 'none';
             if(player && player.destroy) player.destroy();
@@ -626,6 +673,8 @@ const htmlInterface = `
         const startS = parseTime(inicio);
         const endS = parseTime(fim);
 
+        const subtitle_lang = document.getElementById('subtitle-lang').value || null;
+
         if (startS >= endS) {
             alert('O tempo de início deve ser menor que o tempo de fim.');
             return;
@@ -652,7 +701,8 @@ const htmlInterface = `
                 body: JSON.stringify({ 
                     youtube_url: url, 
                     start_ms: startS * 1000, 
-                    end_ms: endS * 1000 
+                    end_ms: endS * 1000,
+                    subtitle_lang: subtitle_lang
                 })
             });
             const data = await res.json();

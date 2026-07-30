@@ -94,12 +94,13 @@ def process_job(job):
     try:
         # 1. Download Modularizado
         update_job_status(job_id, "baixando")
-        base_file, title = download_youtube_video(youtube_id, DOWNLOAD_DIR)
+        subtitle_lang = job.get('subtitle_lang')
+        base_file, title, subtitle_path = download_youtube_video(youtube_id, DOWNLOAD_DIR, subtitle_lang=subtitle_lang)
         
         # 2. Edição Modularizada
         update_job_status(job_id, "cortando")
         output_file = os.path.join(DOWNLOAD_DIR, f"{job_id}.mp4")
-        cut_video(base_file, output_file, start_ms, end_ms)
+        cut_video(base_file, output_file, start_ms, end_ms, subtitle_path=subtitle_path)
         
         # 3. Upload Modularizado
         update_job_status(job_id, "uploading")

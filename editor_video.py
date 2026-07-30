@@ -13,7 +13,7 @@ def get_ffmpeg_path():
 
 FFMPEG_EXE = get_ffmpeg_path()
 
-def cut_video(input_path, output_path, start_ms, end_ms):
+def cut_video(input_path, output_path, start_ms, end_ms, subtitle_path=None):
     """
     Recebe um vídeo de entrada e corta no intervalo especificado.
     Retorna o caminho do arquivo de saída.
@@ -27,13 +27,21 @@ def cut_video(input_path, output_path, start_ms, end_ms):
         FFMPEG_EXE, "-y",
         "-i", input_path,
         "-ss", str(start_s),
-        "-to", str(end_s),
+        "-to", str(end_s)
+    ]
+    
+    if subtitle_path:
+        safe_subtitle = subtitle_path.replace('\\', '/')
+        safe_subtitle = safe_subtitle.replace(':', '\\:')
+        ffmpeg_cmd.extend(["-vf", f"subtitles='{safe_subtitle}'"])
+        
+    ffmpeg_cmd.extend([
         "-c:v", "libx264",
         "-crf", "18",
         "-preset", "fast",
         "-c:a", "aac",
         output_path
-    ]
+    ])
     
     subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     

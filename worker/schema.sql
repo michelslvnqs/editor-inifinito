@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS cuts (
     end_ms INTEGER NOT NULL,
     title TEXT,
     status TEXT NOT NULL,
+    subtitle_lang TEXT,
     error_msg TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
