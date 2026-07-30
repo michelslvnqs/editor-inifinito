@@ -120,14 +120,28 @@ export default {
         }
 
         // API (Python): Marcar como concluído
-        if (request.method === "POST" && url.pathname.match(/^\/api\/queue\/[a-zA-Z0-9_.-]+\/complete$/)) {
+        if (request.method === "POST" && url.pathname.match(/^\/api\/queue\/[a-zA-Z0-9_.-]+\/status$/)) {
             const job_id = url.pathname.split("/")[3];
             try {
                 const { status, error_msg, title } = await request.json() as any;
                 
+                const updates = ["status = ?"];
+                const params: any[] = [status];
+                
+                if (error_msg !== undefined) {
+                    updates.push("error_msg = ?");
+                    params.push(error_msg);
+                }
+                if (title !== undefined) {
+                    updates.push("title = ?");
+                    params.push(title);
+                }
+                
+                params.push(job_id);
+                
                 await env.editor_jobs.prepare(
-                    "UPDATE cuts SET status = ?, error_msg = ?, title = ? WHERE job_id = ?"
-                ).bind(status, error_msg || null, title || null, job_id).run();
+                    `UPDATE cuts SET ${updates.join(", ")} WHERE job_id = ?`
+                ).bind(...params).run();
 
                 return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
             } catch (e: any) {
@@ -359,7 +373,13 @@ const htmlInterface = `
             const data = await res.json();
 
             if (data.status === 'processando') {
-                document.getElementById('status-text').innerHTML = 'FFMPEG Trabalhando no corte... <span class="spinner">⚙️</span>';
+                document.getElementById('status-text').innerHTML = 'Preparando... <span class="spinner">⚙️</span>';
+            } else if (data.status === 'baixando') {
+                document.getElementById('status-text').innerHTML = 'Baixando vídeo base do YouTube... <span class="spinner">⬇️</span>';
+            } else if (data.status === 'cortando') {
+                document.getElementById('status-text').innerHTML = 'FFMPEG Trabalhando no corte... <span class="spinner">✂️</span>';
+            } else if (data.status === 'uploading') {
+                document.getElementById('status-text').innerHTML = 'Enviando para a Nuvem... <span class="spinner">☁️</span>';
             } else if (data.status === 'concluido') {
                 clearInterval(pollInterval);
                 document.getElementById('status-text').innerHTML = '✅ Arquivo Cortado com Sucesso!';

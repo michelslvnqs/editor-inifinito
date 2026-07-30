@@ -52,6 +52,7 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 def get_next_job():
     try:
         req = urllib.request.Request(f"{WORKER_URL}/api/queue/next")
+        req.add_header('User-Agent', 'Mozilla/5.0')
         with urllib.request.urlopen(req, timeout=10) as response:
             if response.getcode() == 200:
                 return json.loads(response.read().decode())
@@ -61,10 +62,16 @@ def get_next_job():
 
 def update_job_status(job_id, status, title=None, error_msg=None):
     try:
-        data = {"status": status, "title": title, "error_msg": error_msg}
+        data = {"status": status}
+        if title is not None:
+            data["title"] = title
+        if error_msg is not None:
+            data["error_msg"] = error_msg
+            
         json_data = json.dumps(data).encode('utf-8')
-        req = urllib.request.Request(f"{WORKER_URL}/api/queue/{job_id}/complete", data=json_data, method='POST')
+        req = urllib.request.Request(f"{WORKER_URL}/api/queue/{job_id}/status", data=json_data, method='POST')
         req.add_header('Content-Type', 'application/json')
+        req.add_header('User-Agent', 'Mozilla/5.0')
         with urllib.request.urlopen(req, timeout=10) as response:
             print(f"[{job_id}] Status atualizado para {status}: {response.getcode()}")
     except Exception as e:
@@ -77,6 +84,7 @@ def upload_to_r2(job_id, filepath):
         with open(filepath, 'rb') as f:
             req = urllib.request.Request(f"{WORKER_URL}/api/queue/{job_id}/upload?ext={ext}", data=f, method='PUT')
             req.add_header('Content-Type', 'application/octet-stream')
+            req.add_header('User-Agent', 'Mozilla/5.0')
             with urllib.request.urlopen(req, timeout=300) as response:
                 if response.getcode() == 200:
                     return True
@@ -108,9 +116,10 @@ def process_job(job):
         
         if not base_file:
             print("Vídeo base não encontrado localmente. Baixando arquivo completo...")
+            update_job_status(job_id, "baixando")
             output_template = os.path.join(DOWNLOAD_DIR, f"{youtube_id}.%(ext)s")
             ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'format': 'best[height<=360]',
                 'outtmpl': output_template,
                 'quiet': True,
                 'no_warnings': True,
@@ -135,6 +144,7 @@ def process_job(job):
             raise Exception("Falha ao localizar o vídeo base após o download.")
         
         # 2. Processa o corte com FFMPEG
+        update_job_status(job_id, "cortando")
         output_file = os.path.join(DOWNLOAD_DIR, f"{job_id}.mp4")
         start_s = start_ms / 1000.0
         end_s = end_ms / 1000.0
@@ -162,6 +172,7 @@ def process_job(job):
             raise Exception("FFMPEG falhou ao gerar o arquivo de saída.")
 
         # 3. Fazer upload para o R2 do arquivo CORTADO
+        update_job_status(job_id, "uploading")
         success = upload_to_r2(job_id, output_file)
         
         if not success:
