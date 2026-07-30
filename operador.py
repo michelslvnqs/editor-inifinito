@@ -38,6 +38,32 @@ DOWNLOAD_DIR = "downloads"
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+def fetch_subtitles_info(youtube_id):
+    import yt_dlp
+    ydl_opts = {
+        'quiet': True,
+        'skip_download': True,
+    }
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={youtube_id}", download=False)
+            subs = []
+            added = set()
+            
+            manual = info.get('subtitles', {})
+            for lang in manual:
+                subs.append({"code": lang, "name": f"{lang.upper()} (Oficial)"})
+                added.add(lang)
+                
+            auto = info.get('automatic_captions', {})
+            for lang in auto:
+                if lang not in added:
+                    subs.append({"code": lang, "name": f"{lang.upper()} (Auto)"})
+                    
+            return subs
+        except:
+            return []
+
 def get_next_job():
     try:
         req = urllib.request.Request(f"{WORKER_URL}/api/queue/next")
@@ -92,6 +118,14 @@ def process_job(job):
     print(f"\n--- Iniciando Job {job_id} ---")
     
     try:
+        if start_ms == -1 and end_ms == -1:
+            update_job_status(job_id, "processando")
+            subs = fetch_subtitles_info(youtube_id)
+            import json
+            update_job_status(job_id, "concluido", error_msg=json.dumps(subs))
+            print(f"Info Job {job_id} finalizado.")
+            return
+
         # 1. Download Modularizado
         update_job_status(job_id, "baixando")
         subtitle_lang = job.get('subtitle_lang')

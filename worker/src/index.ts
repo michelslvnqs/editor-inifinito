@@ -36,7 +36,13 @@ export default {
             const ytUrl = url.searchParams.get("url");
             if (!ytUrl) return new Response("Missing url", { status: 400, headers: corsHeaders });
             try {
-                const ytRes = await fetch(ytUrl);
+                const ytRes = await fetch(ytUrl, {
+                    headers: {
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8,pt;q=0.7",
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+                    }
+                });
                 const html = await ytRes.text();
                 const match = html.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
                 let subs: any[] = [];
@@ -61,7 +67,7 @@ export default {
                 const youtube_id = extractYouTubeId(youtube_url);
                 if (!youtube_id) return new Response(JSON.stringify({ error: "URL do YouTube inválida" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-                const job_id = `${youtube_id}_${Math.floor(start_ms)}_${Math.floor(end_ms)}` + (subtitle_lang ? `_sub_${subtitle_lang}` : "");
+                const job_id = start_ms === -1 ? `${youtube_id}_info` : `${youtube_id}_${Math.floor(start_ms)}_${Math.floor(end_ms)}` + (subtitle_lang ? `_sub_${subtitle_lang}` : "");
 
                 // Verifica se já existe o mesmo corte
                 const row = await env.editor_jobs.prepare(
@@ -516,6 +522,7 @@ const htmlInterface = `
     };
 
     // Detecta colagem de link do YouTube
+    let infoInterval = null;
     document.getElementById('url').addEventListener('input', async function(e) {
         const val = e.target.value;
         const match = val.match(/(?:youtu\\.be\\/|youtube\\.com\\/(?:.*v=|.*\\/))([^&?]+)/);
@@ -524,23 +531,49 @@ const htmlInterface = `
             loadVideo(match[1]);
             
             const subSelect = document.getElementById('subtitle-lang');
-            subSelect.innerHTML = '<option value="">Carregando legendas...</option>';
+            subSelect.innerHTML = '<option value="">Carregando legendas (Operador)...</option>';
+            if (infoInterval) clearInterval(infoInterval);
             try {
-                const res = await fetch('/api/info?url=' + encodeURIComponent(val));
+                const res = await fetch('/api/videos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ youtube_url: val, start_ms: -1, end_ms: -1 })
+                });
                 const data = await res.json();
-                subSelect.innerHTML = '<option value="">Sem legenda</option>';
-                if (data.subtitles && data.subtitles.length > 0) {
-                    data.subtitles.forEach(s => {
-                        const opt = document.createElement('option');
-                        opt.value = s.code;
-                        opt.innerText = s.name + ' (' + s.code + ')';
-                        subSelect.appendChild(opt);
-                    });
-                } else {
-                    subSelect.innerHTML = '<option value="">Nenhuma legenda encontrada</option>';
+                
+                if (data.job_id) {
+                    let attempts = 0;
+                    infoInterval = setInterval(async () => {
+                        attempts++;
+                        const sRes = await fetch('/api/videos/' + data.job_id);
+                        const sData = await sRes.json();
+                        
+                        if (sData.status === 'concluido') {
+                            clearInterval(infoInterval);
+                            try {
+                                const subs = JSON.parse(sData.error_msg || "[]");
+                                subSelect.innerHTML = '<option value="">Sem legenda</option>';
+                                if (subs.length > 0) {
+                                    subs.forEach(s => {
+                                        const opt = document.createElement('option');
+                                        opt.value = s.code;
+                                        opt.innerText = s.name;
+                                        subSelect.appendChild(opt);
+                                    });
+                                } else {
+                                    subSelect.innerHTML = '<option value="">Nenhuma legenda encontrada</option>';
+                                }
+                            } catch(e) {
+                                subSelect.innerHTML = '<option value="">Nenhuma legenda encontrada</option>';
+                            }
+                        } else if (sData.status === 'erro' || attempts > 30) {
+                            clearInterval(infoInterval);
+                            subSelect.innerHTML = '<option value="">Erro ao buscar legendas</option>';
+                        }
+                    }, 1000);
                 }
             } catch(err) {
-                subSelect.innerHTML = '<option value="">Erro ao buscar legendas</option>';
+                subSelect.innerHTML = '<option value="">Erro de conexão</option>';
             }
         } else {
             document.getElementById('editor-area').style.display = 'none';
