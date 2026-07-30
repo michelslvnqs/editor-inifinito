@@ -3,6 +3,12 @@ export interface Env {
     editor_storage: R2Bucket;
 }
 
+function extractYouTubeId(url: string): string | null {
+    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const match = url.match(regExp);
+    return (match && match[2].length === 11) ? match[2] : null;
+}
+
 export default {
     async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
         const url = new URL(request.url);
@@ -25,19 +31,35 @@ export default {
             });
         }
 
-        // API: Criar pedido
-        if (request.method === "POST" && url.pathname === "/api/pedidos") {
+        // API: Criar pedido (Deduplicação Inteligente)
+        if (request.method === "POST" && url.pathname === "/api/videos") {
             try {
                 const { youtube_url } = await request.json() as any;
                 if (!youtube_url) return new Response(JSON.stringify({ error: "youtube_url is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
                 
-                const uid = crypto.randomUUID();
-                
-                await env.editor_jobs.prepare(
-                    "INSERT INTO pedidos (uid, youtube_url, status) VALUES (?, ?, ?)"
-                ).bind(uid, youtube_url, "pendente").run();
+                const youtube_id = extractYouTubeId(youtube_url);
+                if (!youtube_id) return new Response(JSON.stringify({ error: "URL do YouTube inválida" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-                return new Response(JSON.stringify({ uid, status: "pendente" }), {
+                // Verifica se já existe
+                const row = await env.editor_jobs.prepare(
+                    "SELECT * FROM videos WHERE youtube_id = ?"
+                ).bind(youtube_id).first();
+
+                if (row) {
+                    // Já está na fila ou concluído, retorna o status atual
+                    return new Response(JSON.stringify({
+                        youtube_id,
+                        status: row.status,
+                        r2_url: row.status === 'concluido' ? `${url.origin}/downloads/${youtube_id}` : null
+                    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                }
+
+                // Novo pedido
+                await env.editor_jobs.prepare(
+                    "INSERT INTO videos (youtube_id, status) VALUES (?, ?)"
+                ).bind(youtube_id, "pendente").run();
+
+                return new Response(JSON.stringify({ youtube_id, status: "pendente" }), {
                     headers: { ...corsHeaders, "Content-Type": "application/json" },
                 });
             } catch (e: any) {
@@ -46,25 +68,26 @@ export default {
         }
 
         // API: Status do pedido
-        if (request.method === "GET" && url.pathname.startsWith("/api/pedidos/")) {
-            const uid = url.pathname.split("/").pop();
-            if (!uid) return new Response("Not found", { status: 404 });
+        if (request.method === "GET" && url.pathname.startsWith("/api/videos/")) {
+            const youtube_id = url.pathname.split("/").pop();
+            if (!youtube_id) return new Response("Not found", { status: 404 });
 
             const row = await env.editor_jobs.prepare(
-                "SELECT * FROM pedidos WHERE uid = ?"
-            ).bind(uid).first();
+                "SELECT * FROM videos WHERE youtube_id = ?"
+            ).bind(youtube_id).first();
 
             if (!row) return new Response(JSON.stringify({ error: "Pedido não encontrado" }), { status: 404, headers: corsHeaders });
 
-            return new Response(JSON.stringify(row), {
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+            return new Response(JSON.stringify({
+                ...row,
+                r2_url: row.status === 'concluido' ? `${url.origin}/downloads/${youtube_id}` : null
+            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
         // API (Python): Pegar próximo
         if (request.method === "GET" && url.pathname === "/api/queue/next") {
             const row = await env.editor_jobs.prepare(
-                "SELECT * FROM pedidos WHERE status = 'pendente' ORDER BY created_at ASC LIMIT 1"
+                "SELECT * FROM videos WHERE status = 'pendente' ORDER BY created_at ASC LIMIT 1"
             ).first();
 
             if (!row) {
@@ -75,8 +98,8 @@ export default {
             }
 
             await env.editor_jobs.prepare(
-                "UPDATE pedidos SET status = 'processando' WHERE uid = ?"
-            ).bind(row.uid).run();
+                "UPDATE videos SET status = 'processando' WHERE youtube_id = ?"
+            ).bind(row.youtube_id).run();
 
             return new Response(JSON.stringify(row), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -84,29 +107,25 @@ export default {
         }
 
         // API (Python): Upload para R2
-        if (request.method === "PUT" && url.pathname.match(/^\/api\/queue\/[a-zA-Z0-9-]+\/upload$/)) {
-            const uid = url.pathname.split("/")[3];
+        if (request.method === "PUT" && url.pathname.match(/^\/api\/queue\/[a-zA-Z0-9_-]+\/upload$/)) {
+            const youtube_id = url.pathname.split("/")[3];
             const ext = url.searchParams.get("ext") || "mp4";
-            const filename = `${uid}.${ext}`;
+            const filename = `${youtube_id}.${ext}`;
             
             await env.editor_storage.put(filename, request.body);
             
-            return new Response(JSON.stringify({ 
-                success: true, 
-                r2_path: filename,
-                download_url: `${url.origin}/downloads/${filename}`
-            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
         }
 
-        // API (Python): Marcar como concluído ou erro
-        if (request.method === "POST" && url.pathname.match(/^\/api\/queue\/[a-zA-Z0-9-]+\/complete$/)) {
-            const uid = url.pathname.split("/")[3];
+        // API (Python): Marcar como concluído ou erro (Recebe o title)
+        if (request.method === "POST" && url.pathname.match(/^\/api\/queue\/[a-zA-Z0-9_-]+\/complete$/)) {
+            const youtube_id = url.pathname.split("/")[3];
             try {
-                const { status, r2_url, error_msg } = await request.json() as any;
+                const { status, error_msg, title } = await request.json() as any;
                 
                 await env.editor_jobs.prepare(
-                    "UPDATE pedidos SET status = ?, r2_url = ?, error_msg = ? WHERE uid = ?"
-                ).bind(status, r2_url || null, error_msg || null, uid).run();
+                    "UPDATE videos SET status = ?, error_msg = ?, title = ? WHERE youtube_id = ?"
+                ).bind(status, error_msg || null, title || null, youtube_id).run();
 
                 return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
             } catch (e: any) {
@@ -114,18 +133,28 @@ export default {
             }
         }
 
-        // Download do arquivo do R2
+        // Download do arquivo do R2 com o nome original (Content-Disposition)
         if (request.method === "GET" && url.pathname.startsWith("/downloads/")) {
-            const filename = url.pathname.split("/").pop();
-            if (!filename) return new Response("Not found", { status: 404 });
+            const youtube_id = url.pathname.split("/").pop();
+            if (!youtube_id) return new Response("Not found", { status: 404 });
 
-            const object = await env.editor_storage.get(filename);
+            // Buscar informações no D1 para obter o título original
+            const row = await env.editor_jobs.prepare("SELECT title FROM videos WHERE youtube_id = ?").bind(youtube_id).first();
+            const originalTitle = row && row.title ? String(row.title) : youtube_id;
+
+            // Busca o arquivo, tentaremos com mp4 como fallback (pois é o mais comum)
+            // Se você puder ter webm, mkvs, pode precisar armazenar a extensão no D1 também. 
+            // Para simplificar, assumimos mp4.
+            const object = await env.editor_storage.get(`${youtube_id}.mp4`);
             if (!object) return new Response("File not found in R2", { status: 404 });
+
+            const safeFilename = encodeURIComponent(originalTitle.replace(/[\/\\?%*:|"<>]/g, '')) + ".mp4";
 
             const headers = new Headers();
             object.writeHttpMetadata(headers);
             headers.set("etag", object.httpEtag);
-            headers.set("Content-Disposition", `attachment; filename="${filename}"`);
+            // Isso força o download com o nome original elegante!
+            headers.set("Content-Disposition", `attachment; filename*=UTF-8''${safeFilename}`);
 
             return new Response(object.body, { headers });
         }
@@ -153,6 +182,7 @@ const htmlInterface = `
         a.btn-download { display: inline-block; background: #10b981; color: white; padding: 8px 16px; border-radius: 6px; text-decoration: none; font-weight: bold; margin-top: 10px;}
         a.btn-download:hover { background: #059669; }
         .error { color: #ef4444; }
+        .badge-cache { font-size: 11px; background: #22c55e; padding: 2px 6px; border-radius: 4px; vertical-align: middle; margin-left: 5px; }
     </style>
 </head>
 <body>
@@ -168,7 +198,7 @@ const htmlInterface = `
     </div>
 
     <script>
-        let currentUid = null;
+        let currentId = null;
         let pollInterval = null;
 
         async function enviar() {
@@ -176,23 +206,30 @@ const htmlInterface = `
             if (!url) return alert('Insira uma URL válida');
 
             document.getElementById('status-box').style.display = 'block';
-            document.getElementById('status-text').innerHTML = 'Enviando para a fila... <span class="spinner">⏳</span>';
+            document.getElementById('status-text').innerHTML = 'Analisando URL... <span class="spinner">⏳</span>';
             document.getElementById('link-box').innerHTML = '';
+            clearInterval(pollInterval);
 
             try {
-                const res = await fetch('/api/pedidos', {
+                const res = await fetch('/api/videos', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ youtube_url: url })
                 });
                 const data = await res.json();
                 
-                if (data.uid) {
-                    currentUid = data.uid;
-                    document.getElementById('status-text').innerHTML = 'Na fila, aguardando... <span class="spinner">⏳</span>';
-                    pollInterval = setInterval(checkStatus, 5000);
+                if (data.youtube_id) {
+                    currentId = data.youtube_id;
+                    if (data.status === 'concluido') {
+                        // Magia do Cache!
+                        document.getElementById('status-text').innerHTML = '✅ Vídeo Encontrado! <span class="badge-cache">CACHE</span>';
+                        document.getElementById('link-box').innerHTML = \`<a href="\${data.r2_url}" class="btn-download">⬇️ Baixar Arquivo Original</a>\`;
+                    } else {
+                        document.getElementById('status-text').innerHTML = 'Na fila, aguardando... <span class="spinner">⏳</span>';
+                        pollInterval = setInterval(checkStatus, 5000);
+                    }
                 } else {
-                    document.getElementById('status-text').innerHTML = '<span class="error">Erro ao colocar na fila.</span>';
+                    document.getElementById('status-text').innerHTML = \`<span class="error">\${data.error || 'Erro'}</span>\`;
                 }
             } catch(e) {
                 document.getElementById('status-text').innerHTML = '<span class="error">Erro de conexão.</span>';
@@ -200,8 +237,8 @@ const htmlInterface = `
         }
 
         async function checkStatus() {
-            if (!currentUid) return;
-            const res = await fetch('/api/pedidos/' + currentUid);
+            if (!currentId) return;
+            const res = await fetch('/api/videos/' + currentId);
             const data = await res.json();
 
             if (data.status === 'processando') {
@@ -209,7 +246,7 @@ const htmlInterface = `
             } else if (data.status === 'concluido') {
                 clearInterval(pollInterval);
                 document.getElementById('status-text').innerHTML = '✅ Download Pronto!';
-                document.getElementById('link-box').innerHTML = \`<a href="\${data.r2_url}" class="btn-download" target="_blank">⬇️ Baixar Arquivo</a>\`;
+                document.getElementById('link-box').innerHTML = \`<a href="\${data.r2_url}" class="btn-download">⬇️ Baixar Arquivo Original</a>\`;
             } else if (data.status === 'erro') {
                 clearInterval(pollInterval);
                 document.getElementById('status-text').innerHTML = '<span class="error">❌ Falha: ' + (data.error_msg || 'Erro desconhecido') + '</span>';
