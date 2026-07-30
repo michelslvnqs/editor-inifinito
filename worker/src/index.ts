@@ -1,6 +1,7 @@
 export interface Env {
     editor_jobs: D1Database;
     editor_storage: R2Bucket;
+    QUEUE_MANAGER: DurableObjectNamespace;
 }
 
 function extractYouTubeId(url: string): string | null {
@@ -22,6 +23,23 @@ export default {
 
         if (request.method === "OPTIONS") {
             return new Response(null, { headers: corsHeaders });
+        }
+
+        // Helper para avisar o Durable Object
+        const notifyDO = async (payload: any) => {
+            const id = env.QUEUE_MANAGER.idFromName("global_room");
+            const stub = env.QUEUE_MANAGER.get(id);
+            await stub.fetch(new Request("http://internal/broadcast", {
+                method: "POST",
+                body: JSON.stringify(payload)
+            }));
+        };
+
+        // API: Conexão WebSocket Principal
+        if (url.pathname === "/api/ws") {
+            const id = env.QUEUE_MANAGER.idFromName("global_room");
+            const stub = env.QUEUE_MANAGER.get(id);
+            return stub.fetch(request);
         }
 
         // Frontend
@@ -86,6 +104,8 @@ export default {
                 await env.editor_jobs.prepare(
                     "INSERT INTO cuts (job_id, youtube_id, start_ms, end_ms, status, subtitle_lang) VALUES (?, ?, ?, ?, ?, ?)"
                 ).bind(job_id, youtube_id, start_ms, end_ms, "pendente", subtitle_lang).run();
+
+                ctx.waitUntil(notifyDO({ type: "new_job", job_id, youtube_id, start_ms, end_ms, subtitle_lang }));
 
                 return new Response(JSON.stringify({ job_id, status: "pendente" }), {
                     headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -168,6 +188,8 @@ export default {
                 await env.editor_jobs.prepare(
                     `UPDATE cuts SET ${updates.join(", ")} WHERE job_id = ?`
                 ).bind(...params).run();
+
+                ctx.waitUntil(notifyDO({ type: "status_update", job_id, status, error_msg, title }));
 
                 return new Response(JSON.stringify({ success: true }), { headers: corsHeaders });
             } catch (e: any) {
@@ -499,59 +521,45 @@ const htmlInterface = `
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.7.1/nouislider.min.js"></script>
 <script>
-    let pollInterval = null;
+    let ws = null;
     let player;
     let videoDuration = 0;
     let slider = null;
     let loopInterval = null;
     let isTesting = false;
     let loadedUrl = '';
+    window.currentInfoJobId = null;
 
-    // Inicializa a API do YouTube
-    var tag = document.createElement('script');
-    tag.src = "https://www.youtube.com/iframe_api";
-    var firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
-
-    window.onload = () => {
-        const jobId = localStorage.getItem('currentJobId');
-        if (jobId) {
-            mostrarStatus();
-            iniciarPolling(jobId);
-        }
-    };
-
-    // Detecta colagem de link do YouTube
-    let infoInterval = null;
-    document.getElementById('url').addEventListener('input', async function(e) {
-        const val = e.target.value;
-        const match = val.match(/(?:youtu\\.be\\/|youtube\\.com\\/(?:.*v=|.*\\/))([^&?]+)/);
-        if(match && match[1]) {
-            loadedUrl = val;
-            loadVideo(match[1]);
-            
-            const subSelect = document.getElementById('subtitle-lang');
-            subSelect.innerHTML = '<option value="">Carregando legendas (Operador)...</option>';
-            if (infoInterval) clearInterval(infoInterval);
+    function connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(protocol + '//' + window.location.host + '/api/ws');
+        
+        ws.onmessage = (event) => {
             try {
-                const res = await fetch('/api/videos', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ youtube_url: val, start_ms: -1, end_ms: -1 })
-                });
-                const data = await res.json();
+                const data = JSON.parse(event.data);
                 
-                if (data.job_id) {
-                    let attempts = 0;
-                    infoInterval = setInterval(async () => {
-                        attempts++;
-                        const sRes = await fetch('/api/videos/' + data.job_id);
-                        const sData = await sRes.json();
-                        
-                        if (sData.status === 'concluido') {
-                            clearInterval(infoInterval);
+                if (data.type === 'status_update') {
+                    // Trata atualização de Corte
+                    const currentJob = localStorage.getItem('currentJobId');
+                    if (data.job_id === currentJob) {
+                        const statusText = document.getElementById('status-text');
+                        if (data.status === 'processando') statusText.innerText = 'Preparando...';
+                        else if (data.status === 'baixando') statusText.innerText = 'Baixando vídeo base do YouTube...';
+                        else if (data.status === 'cortando') statusText.innerText = 'FFMPEG Trabalhando no corte...';
+                        else if (data.status === 'uploading') statusText.innerText = 'Enviando para a Nuvem...';
+                        else if (data.status === 'concluido') {
+                            const r2_url = window.location.origin + '/downloads/' + data.job_id;
+                            marcarConcluido(r2_url, false);
+                        }
+                        else if (data.status === 'erro') marcarErro(data.error_msg);
+                    }
+                    
+                    // Trata atualização de Legendas (Info Job)
+                    if (data.job_id === window.currentInfoJobId) {
+                        const subSelect = document.getElementById('subtitle-lang');
+                        if (data.status === 'concluido') {
                             try {
-                                const subs = JSON.parse(sData.error_msg || "[]");
+                                const subs = JSON.parse(data.error_msg || "[]");
                                 subSelect.innerHTML = '<option value="">Sem legenda</option>';
                                 if (subs.length > 0) {
                                     subs.forEach(s => {
@@ -566,11 +574,61 @@ const htmlInterface = `
                             } catch(e) {
                                 subSelect.innerHTML = '<option value="">Nenhuma legenda encontrada</option>';
                             }
-                        } else if (sData.status === 'erro' || attempts > 30) {
-                            clearInterval(infoInterval);
+                        } else if (data.status === 'erro') {
                             subSelect.innerHTML = '<option value="">Erro ao buscar legendas</option>';
                         }
-                    }, 1000);
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        };
+        
+        ws.onclose = () => {
+            setTimeout(connectWebSocket, 2000); // Reconnect
+        };
+    }
+
+    // Inicializa a API do YouTube e WebSocket
+    var tag = document.createElement('script');
+    tag.src = "https://www.youtube.com/iframe_api";
+    var firstScriptTag = document.getElementsByTagName('script')[0];
+    firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+    window.onload = () => {
+        connectWebSocket();
+        const jobId = localStorage.getItem('currentJobId');
+        if (jobId) {
+            // Se houver um job pendente, mostramos o status.
+            // Como usamos WebSocket, assim que o servidor mandar o status, atualiza sozinho!
+            mostrarStatus();
+        }
+    };
+
+    // Detecta colagem de link do YouTube
+    document.getElementById('url').addEventListener('input', async function(e) {
+        const val = e.target.value;
+        const match = val.match(/(?:youtu\\.be\\/|youtube\\.com\\/(?:.*v=|.*\\/))([^&?]+)/);
+        if(match && match[1]) {
+            loadedUrl = val;
+            loadVideo(match[1]);
+            
+            const subSelect = document.getElementById('subtitle-lang');
+            subSelect.innerHTML = '<option value="">Carregando legendas (Operador via WebSocket)...</option>';
+            try {
+                const res = await fetch('/api/videos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ youtube_url: val, start_ms: -1, end_ms: -1 })
+                });
+                const data = await res.json();
+                
+                if (data.job_id) {
+                    window.currentInfoJobId = data.job_id;
+                    if (data.status === 'concluido') {
+                        // Já estava no cache
+                        ws.onmessage({ data: JSON.stringify({ type: 'status_update', job_id: data.job_id, status: 'concluido', error_msg: data.error_msg }) });
+                    }
                 }
             } catch(err) {
                 subSelect.innerHTML = '<option value="">Erro de conexão</option>';
@@ -715,7 +773,7 @@ const htmlInterface = `
 
         const btn = document.getElementById('btn-cortar');
         btn.disabled = true;
-        btn.innerText = 'Enviando para o Operador...';
+        btn.innerText = 'Enviando para o Operador via WebSocket...';
         
         const btnDownload = document.getElementById('btn-download');
         btnDownload.classList.add('disabled');
@@ -747,8 +805,6 @@ const htmlInterface = `
                 if (data.status === 'concluido') {
                     // CENA DO CACHE!
                     marcarConcluido(data.r2_url, true);
-                } else {
-                    iniciarPolling(data.job_id);
                 }
             } else {
                 alert('Erro ao criar pedido: ' + data.error);
@@ -776,8 +832,6 @@ const htmlInterface = `
     }
 
     function marcarConcluido(r2_url, isCache) {
-        if (pollInterval) clearInterval(pollInterval);
-        
         const spinner = document.getElementById('spinner');
         const btnDownload = document.getElementById('btn-download');
         const pill = document.getElementById('status-pill');
@@ -805,7 +859,6 @@ const htmlInterface = `
     }
 
     function marcarErro(erroMsg) {
-        if (pollInterval) clearInterval(pollInterval);
         const spinner = document.getElementById('spinner');
         const pill = document.getElementById('status-pill');
         const statusText = document.getElementById('status-text');
@@ -820,44 +873,8 @@ const htmlInterface = `
         btnCortar.disabled = false;
         btnCortar.innerText = '✂️ Tentar Novamente';
     }
-
-    function iniciarPolling(jobId) {
-        if (pollInterval) clearInterval(pollInterval);
-        
-        const verificar = async () => {
-            try {
-                const res = await fetch('/api/videos/' + jobId);
-                const data = await res.json();
-                
-                const statusText = document.getElementById('status-text');
-                
-                if (data.status === 'processando') {
-                    statusText.innerText = 'Preparando...';
-                } else if (data.status === 'baixando') {
-                    statusText.innerText = 'Baixando vídeo base do YouTube...';
-                } else if (data.status === 'cortando') {
-                    statusText.innerText = 'FFMPEG Trabalhando no corte...';
-                } else if (data.status === 'uploading') {
-                    statusText.innerText = 'Enviando para a Nuvem...';
-                } else if (data.status === 'concluido') {
-                    marcarConcluido(data.r2_url, false);
-                } else if (data.status === 'erro') {
-                    marcarErro(data.error_msg);
-                } else {
-                    statusText.innerText = 'Na Fila de Processamento...';
-                }
-                
-            } catch (e) {
-                console.error(e);
-            }
-        };
-        
-        verificar();
-        pollInterval = setInterval(verificar, 5000);
-    }
     
     function limparSessao() {
-        if (pollInterval) clearInterval(pollInterval);
         localStorage.removeItem('currentJobId');
         document.getElementById('form-area').style.display = 'block';
         document.getElementById('status-area').style.display = 'none';
@@ -878,3 +895,35 @@ const htmlInterface = `
 </body>
 </html>
 `;
+
+export class QueueManager {
+    state: DurableObjectState;
+
+    constructor(state: DurableObjectState, env: Env) {
+        this.state = state;
+    }
+
+    async fetch(request: Request) {
+        if (request.url.includes("/broadcast")) {
+            const msg = await request.text();
+            for (const ws of this.state.getWebSockets()) {
+                ws.send(msg);
+            }
+            return new Response("OK");
+        }
+
+        if (request.headers.get("Upgrade") === "websocket") {
+            const pair = new WebSocketPair();
+            this.state.acceptWebSocket(pair[1]);
+            return new Response(null, { status: 101, webSocket: pair[0] });
+        }
+
+        return new Response("Not found", { status: 404 });
+    }
+
+    async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+        for (const client of this.state.getWebSockets()) {
+            if (client !== ws) client.send(message);
+        }
+    }
+}

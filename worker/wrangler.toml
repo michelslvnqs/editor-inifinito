@@ -1,6 +1,7 @@
 name = "blue-unit-2872"
 main = "src/index.ts"
-compatibility_date = "2024-07-29"
+compatibility_date = "2024-02-23"
+compatibility_flags = ["nodejs_compat"]
 
 [[d1_databases]]
 binding = "editor_jobs"
@@ -11,3 +12,11 @@ migrations_dir = "migrations"
 [[r2_buckets]]
 binding = "editor_storage"
 bucket_name = "editor-storage"
+
+[[durable_objects.bindings]]
+name = "QUEUE_MANAGER"
+class_name = "QueueManager"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["QueueManager"]

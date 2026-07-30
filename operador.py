@@ -22,6 +22,11 @@ def ensure_dependencies():
         except ImportError:
             missing_pkgs.append("imageio-ffmpeg")
             
+    try:
+        import websocket
+    except ImportError:
+        missing_pkgs.append("websocket-client")
+            
     if missing_pkgs:
         print(f"Buscando dependências ausentes: {', '.join(missing_pkgs)}...")
         subprocess.run([sys.executable, "-m", "pip", "install", *missing_pkgs], check=True)
@@ -64,16 +69,7 @@ def fetch_subtitles_info(youtube_id):
         except:
             return []
 
-def get_next_job():
-    try:
-        req = urllib.request.Request(f"{WORKER_URL}/api/queue/next")
-        req.add_header('User-Agent', 'Mozilla/5.0')
-        with urllib.request.urlopen(req, timeout=10) as response:
-            if response.getcode() == 200:
-                return json.loads(response.read().decode())
-    except Exception as e:
-        print(f"Erro ao buscar fila: {e}")
-    return None
+# get_next_job removido (usando WebSockets agora)
 
 def update_job_status(job_id, status, title=None, error_msg=None):
     try:
@@ -153,15 +149,36 @@ def process_job(job):
         print(f"Falha no Job {job_id}: {error_msg}")
         update_job_status(job_id, "erro", error_msg=error_msg)
 
+def on_message(ws, message):
+    try:
+        data = json.loads(message)
+        if data.get('type') == 'new_job':
+            import threading
+            threading.Thread(target=process_job, args=(data,)).start()
+    except Exception as e:
+        print(f"Erro ao processar mensagem do WS: {e}")
+
+def on_error(ws, error):
+    print(f"WebSocket Erro: {error}")
+
+def on_close(ws, close_status_code, close_msg):
+    print("WebSocket Fechado. Reconectando em 5 segundos...")
+    time.sleep(5)
+    main()
+
+def on_open(ws):
+    print(f"Conectado ao WebSocket Orquestrador ({WORKER_URL.replace('http', 'ws')}/api/ws)!")
+
 def main():
-    print("Iniciando Operador Orquestrador Modular...")
-    print(f"Monitorando a API: {WORKER_URL}")
-    while True:
-        job = get_next_job()
-        if job and 'job_id' in job:
-            process_job(job)
-        else:
-            time.sleep(5)
+    print("Iniciando Operador Orquestrador Modular com WebSockets...")
+    ws_url = WORKER_URL.replace("https", "wss").replace("http", "ws") + "/api/ws"
+    import websocket
+    ws = websocket.WebSocketApp(ws_url,
+                              on_open=on_open,
+                              on_message=on_message,
+                              on_error=on_error,
+                              on_close=on_close)
+    ws.run_forever()
 
 if __name__ == "__main__":
     main()
