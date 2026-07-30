@@ -8,11 +8,7 @@ import shutil
 # === AUTO-INSTALAÇÃO DE DEPENDÊNCIAS ===
 def ensure_dependencies():
     missing_pkgs = []
-    try:
-        import requests
-    except ImportError:
-        missing_pkgs.append("requests")
-        
+    
     try:
         import yt_dlp
     except ImportError:
@@ -31,8 +27,9 @@ def ensure_dependencies():
 
 ensure_dependencies()
 
-import requests
 import yt_dlp
+import urllib.request
+import json
 
 def get_ffmpeg_path():
     if shutil.which("ffmpeg"):
@@ -54,9 +51,10 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 def get_next_job():
     try:
-        res = requests.get(f"{WORKER_URL}/api/queue/next", timeout=10)
-        if res.status_code == 200:
-            return res.json()
+        req = urllib.request.Request(f"{WORKER_URL}/api/queue/next")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if response.getcode() == 200:
+                return json.loads(response.read().decode())
     except Exception as e:
         print(f"Erro ao buscar fila: {e}")
     return None
@@ -64,8 +62,11 @@ def get_next_job():
 def update_job_status(job_id, status, title=None, error_msg=None):
     try:
         data = {"status": status, "title": title, "error_msg": error_msg}
-        res = requests.post(f"{WORKER_URL}/api/queue/{job_id}/complete", json=data, timeout=10)
-        print(f"[{job_id}] Status atualizado para {status}: {res.status_code}")
+        json_data = json.dumps(data).encode('utf-8')
+        req = urllib.request.Request(f"{WORKER_URL}/api/queue/{job_id}/complete", data=json_data, method='POST')
+        req.add_header('Content-Type', 'application/json')
+        with urllib.request.urlopen(req, timeout=10) as response:
+            print(f"[{job_id}] Status atualizado para {status}: {response.getcode()}")
     except Exception as e:
         print(f"Erro ao atualizar status do ID {job_id}: {e}")
 
@@ -74,11 +75,13 @@ def upload_to_r2(job_id, filepath):
         ext = filepath.split(".")[-1]
         print(f"Fazendo upload de {filepath} para o R2 via Worker...")
         with open(filepath, 'rb') as f:
-            res = requests.put(f"{WORKER_URL}/api/queue/{job_id}/upload?ext={ext}", data=f, timeout=300)
-            if res.status_code == 200:
-                return True
-            else:
-                raise Exception(f"Erro no upload. Status: {res.status_code}, Msg: {res.text}")
+            req = urllib.request.Request(f"{WORKER_URL}/api/queue/{job_id}/upload?ext={ext}", data=f, method='PUT')
+            req.add_header('Content-Type', 'application/octet-stream')
+            with urllib.request.urlopen(req, timeout=300) as response:
+                if response.getcode() == 200:
+                    return True
+                else:
+                    raise Exception(f"Erro no upload. Status: {response.getcode()}, Msg: {response.read().decode()}")
     except Exception as e:
         print(f"Erro no upload_to_r2: {e}")
         return False
