@@ -162,9 +162,7 @@ def on_error(ws, error):
     print(f"WebSocket Erro: {error}")
 
 def on_close(ws, close_status_code, close_msg):
-    print("WebSocket Fechado. Reconectando em 5 segundos...")
-    time.sleep(5)
-    main()
+    print("WebSocket Fechado.")
 
 def on_open(ws):
     print(f"Conectado ao WebSocket Orquestrador ({WORKER_URL.replace('http', 'ws')}/api/ws)!")
@@ -173,12 +171,20 @@ def main():
     print("Iniciando Operador Orquestrador Modular com WebSockets...")
     ws_url = WORKER_URL.replace("https", "wss").replace("http", "ws") + "/api/ws"
     import websocket
-    ws = websocket.WebSocketApp(ws_url,
-                              on_open=on_open,
-                              on_message=on_message,
-                              on_error=on_error,
-                              on_close=on_close)
-    ws.run_forever()
+    while True:
+        try:
+            ws = websocket.WebSocketApp(ws_url,
+                                      header={"User-Agent": "Mozilla/5.0"},
+                                      on_open=on_open,
+                                      on_message=on_message,
+                                      on_error=on_error,
+                                      on_close=on_close)
+            ws.run_forever()
+        except Exception as e:
+            print(f"Erro fatal: {e}")
+        
+        print("Reconectando em 5 segundos...")
+        time.sleep(5)
 
 if __name__ == "__main__":
     main()
