@@ -1,0 +1,13 @@
+name = "blue-unit-2872"
+main = "src/index.ts"
+compatibility_date = "2024-07-29"
+
+[[d1_databases]]
+binding = "editor_jobs"
+database_name = "editor_jobs"
+database_id = "dee87182-ca69-4c99-a320-ddb05ae23bd3"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "editor_storage"
+bucket_name = "editor-storage"
