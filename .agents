@@ -1,0 +1,7 @@
+# Regras do Agente para o projeto editor-infinito
+
+Sempre que os arquivos principais deste projeto forem editados, você DEVE, obrigatoriamente, seguir estes dois passos:
+1. Fazer o commit local das alterações no Git (ex: `git add <arquivos>` e `git commit -m "Sua mensagem"`).
+2. Fazer o push (enviar) essas alterações imediatamente para o repositório na nuvem (ex: `git push origin main`).
+
+Isso garante que o repositório na nuvem esteja sempre sincronizado com as últimas edições.
