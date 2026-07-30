@@ -1,42 +1,40 @@
-import subprocess
-import sys
+import os
+import yt_dlp
 
-def install_yt_dlp():
-    try:
-        import yt_dlp
-    except ImportError:
-        print("yt-dlp não encontrado. Instalando automaticamente...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "yt-dlp"])
-        print("Instalação concluída com sucesso!")
-
-def download_video(url):
-    import yt_dlp
+def download_youtube_video(youtube_id, output_dir="downloads"):
+    """
+    Baixa um vídeo do YouTube em até 360p pre-muxed (vídeo + áudio juntos).
+    Retorna o caminho absoluto do arquivo baixado e o título.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    url = f"https://www.youtube.com/watch?v={youtube_id}"
     
-    # Configurações para baixar até 720p na pasta atual do projeto
-    # O formato 'best[height<=720]' procura um arquivo que já tenha vídeo e áudio juntos até 720p
+    # Verifica se já existe um cache local com o ID
+    for f in os.listdir(output_dir):
+        if f.startswith(youtube_id + ".") and not f.startswith(youtube_id + "_"):
+            # Para extrair título rapidamente do cache
+            with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
+                info = ydl.extract_info(url, download=False)
+                title = info.get('title', youtube_id)
+            print(f"[{youtube_id}] Arquivo base encontrado no cache local.")
+            return os.path.join(output_dir, f), title
+            
+    print(f"[{youtube_id}] Baixando arquivo base completo...")
+    output_template = os.path.join(output_dir, f"{youtube_id}.%(ext)s")
     ydl_opts = {
-        'format': 'best[height<=720]',
-        'outtmpl': 'downloads/%(title)s.%(ext)s',
+        'format': 'best[height<=360]',
+        'outtmpl': output_template,
+        'quiet': True,
+        'no_warnings': True,
     }
     
-    print(f"\nIniciando o download de: {url}")
-    try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
-        print("\nDownload finalizado com sucesso!")
-    except Exception as e:
-        print(f"\nOcorreu um erro durante o download: {e}")
-
-if __name__ == "__main__":
-    # Verifica e instala dependência
-    install_yt_dlp()
-    
-    # Link fornecido ou por argumento
-    if len(sys.argv) > 1:
-        video_url = sys.argv[1]
-    else:
-        print("Uso: python download_video.py <url_do_youtube>")
-        sys.exit(1)
-    
-    # Inicia o download
-    download_video(video_url)
+    title = youtube_id
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        title = info.get('title', youtube_id)
+        
+    for f in os.listdir(output_dir):
+        if f.startswith(youtube_id + ".") and not f.startswith(youtube_id + "_"):
+            return os.path.join(output_dir, f), title
+            
+    raise Exception(f"Falha ao localizar o arquivo baixado para {youtube_id}")
