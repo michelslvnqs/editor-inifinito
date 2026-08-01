@@ -6,6 +6,20 @@ Sempre que os arquivos principais deste projeto forem editados, você DEVE, obri
 
 Isso garante que o repositório na nuvem esteja sempre sincronizado com as últimas edições.
 
+## Qualidade e padrão de desenvolvimento
+
+- Faça todas as alterações de maneira profissional, sem gambiarras ou más práticas.
+- Busque sempre soluções padrão-ouro (estado da arte) em engenharia front-end e back-end.
+- Não deixe código morto nem caminhos, acessos ou implementações legadas que possam ser removidos com segurança.
+- Não mantenha suporte a versões antigas: atualize o que for necessário para a versão mais recente e remova o código obsoleto.
+- Mantenha o projeto o mais organizado possível.
+- Altere apenas o necessário para atender ao pedido atual.
+
+## Foco e escopo das tarefas
+
+- **Uma tarefa por vez:** concentre-se sempre no pedido mais recente do usuário. Não resgate assuntos ou pedidos anteriores para criar pacotes de correções, a menos que o usuário peça explicitamente.
+- **Não adivinhe pendências:** se algo anterior tiver ficado pendente, avise o usuário antes de agir. Mantenha as alterações focadas no assunto do momento.
+
 ## Cloudflare Worker
 Se você editar ou criar arquivos dentro da pasta `worker/` (como `src/index.ts`, `wrangler.toml` ou `schema.sql`), você DEVE fazer o deploy das alterações para a nuvem rodando:
 - `cd worker && npm run deploy`
