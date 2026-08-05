@@ -608,23 +608,48 @@ const htmlInterface = `
     var firstScriptTag = document.getElementsByTagName('script')[0];
     firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
 
-    window.onload = () => {
+    window.onload = async () => {
         connectWebSocket();
         const jobId = localStorage.getItem('currentJobId');
         if (jobId) {
-            // Se houver um job pendente, mostramos o status.
-            // Como usamos WebSocket, assim que o servidor mandar o status, atualiza sozinho!
-            mostrarStatus();
+            try {
+                const res = await fetch('/api/videos/' + jobId);
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.status === 'concluido') {
+                        marcarConcluido(data.r2_url, true);
+                    } else if (data.status === 'erro') {
+                        marcarErro(data.error_msg);
+                    } else {
+                        mostrarStatus();
+                    }
+                } else {
+                    localStorage.removeItem('currentJobId');
+                }
+            } catch(e) {
+                localStorage.removeItem('currentJobId');
+            }
         }
     };
 
     // Detecta colagem de link do YouTube
     document.getElementById('url').addEventListener('input', async function(e) {
         const val = e.target.value;
-        const match = val.match(/(?:youtu\\.be\\/|youtube\\.com\\/(?:.*v=|.*\\/))([^&?]+)/);
+        const match = val.match(/(?:youtu\.be\/|youtube\.com\/(?:.*v=|.*\/))([^&?]+)/);
         if(match && match[1]) {
             loadedUrl = val;
             loadVideo(match[1]);
+            
+            // Reseta status de cortes antigos para permitir novos cortes
+            localStorage.removeItem('currentJobId');
+            document.getElementById('status-area').style.display = 'none';
+            const btnCortar = document.getElementById('btn-cortar');
+            btnCortar.disabled = false;
+            btnCortar.innerText = '✂️ Cortar e Exportar';
+            const btnDownload = document.getElementById('btn-download');
+            btnDownload.classList.add('disabled');
+            btnDownload.innerText = '⬇️ Aguardando Corte...';
+            btnDownload.href = '#';
             
             const subSelect = document.getElementById('subtitle-lang');
             subSelect.innerHTML = '<option value="">Carregando legendas (Operador via WebSocket)...</option>';
