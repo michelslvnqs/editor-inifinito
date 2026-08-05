@@ -492,12 +492,12 @@ const htmlInterface = `
 
             <div class="time-row">
                 <div class="input-group">
-                    <label>Início (Ex: 00:30)</label>
-                    <input type="text" id="inicio" placeholder="00:00" autocomplete="off">
+                    <label>Início (Ex: 00:30:00 ou 1:30:30)</label>
+                    <input type="text" id="inicio" placeholder="00:00:00" autocomplete="off">
                 </div>
                 <div class="input-group">
-                    <label>Fim (Ex: 01:00)</label>
-                    <input type="text" id="fim" placeholder="00:30" autocomplete="off">
+                    <label>Fim (Ex: 01:00:00 ou 1:45:50)</label>
+                    <input type="text" id="fim" placeholder="00:30:00" autocomplete="off">
                 </div>
             </div>
             
@@ -706,15 +706,64 @@ const htmlInterface = `
         const h = Math.floor(seconds / 3600);
         const m = Math.floor((seconds % 3600) / 60);
         const s = Math.floor(seconds % 60);
-        if(h > 0) return \`\${h.toString().padStart(2,'0')}:\${m.toString().padStart(2,'0')}:\${s.toString().padStart(2,'0')}\`;
-        return \`\${m.toString().padStart(2,'0')}:\${s.toString().padStart(2,'0')}\`;
+        const ms = Math.round((seconds % 1) * 1000);
+        const cs = Math.floor((ms % 1000) / 10);
+
+        const csStr = cs.toString().padStart(2, '0');
+        const sStr = s.toString().padStart(2, '0');
+        const mStr = m.toString().padStart(2, '0');
+        const hStr = h.toString().padStart(2, '0');
+
+        if(h > 0) return \`\${hStr}:\${mStr}:\${sStr}:\${csStr}\`;
+        return \`\${mStr}:\${sStr}:\${csStr}\`;
+    }
+
+    function parseMsString(msStr) {
+        if (!msStr) return 0;
+        if (msStr.length === 1) return parseInt(msStr, 10) / 10;
+        if (msStr.length === 2) return parseInt(msStr, 10) / 100;
+        return parseInt(msStr.slice(0, 3), 10) / 1000;
     }
 
     function parseTime(str) {
-        const pts = str.split(':').map(Number);
-        if(pts.length === 3) return pts[0]*3600 + pts[1]*60 + pts[2];
-        if(pts.length === 2) return pts[0]*60 + pts[1];
-        return pts[0] || 0;
+        if (!str) return 0;
+        str = str.trim().replace(',', '.');
+        let ms = 0;
+        let mainStr = str;
+
+        if (mainStr.includes('.')) {
+            const parts = mainStr.split('.');
+            mainStr = parts[0];
+            ms = parseFloat('0.' + (parts[1] || '0'));
+        }
+
+        const pts = mainStr.split(':').map(p => parseInt(p, 10) || 0);
+
+        if (!str.includes('.')) {
+            if (pts.length === 4) {
+                const msStr = str.split(':')[3];
+                ms = parseMsString(msStr);
+                return pts[0] * 3600 + pts[1] * 60 + pts[2] + ms;
+            } else if (pts.length === 3) {
+                const msStr = str.split(':')[2];
+                const isMs = msStr.length === 3 || pts[2] > 59 || (typeof videoDuration !== 'undefined' && videoDuration > 0 && videoDuration < 3600);
+                if (isMs) {
+                    ms = parseMsString(msStr);
+                    return pts[0] * 60 + pts[1] + ms;
+                } else {
+                    return pts[0] * 3600 + pts[1] * 60 + pts[2];
+                }
+            } else if (pts.length === 2) {
+                return pts[0] * 60 + pts[1];
+            } else if (pts.length === 1) {
+                return pts[0];
+            }
+        }
+
+        if (pts.length === 3) return pts[0] * 3600 + pts[1] * 60 + pts[2] + ms;
+        if (pts.length === 2) return pts[0] * 60 + pts[1] + ms;
+        if (pts.length === 1) return pts[0] + ms;
+        return 0;
     }
 
     // Controles de Teste (Loop)
