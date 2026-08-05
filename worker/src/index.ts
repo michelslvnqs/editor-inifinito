@@ -635,7 +635,7 @@ const htmlInterface = `
     // Detecta colagem de link do YouTube
     document.getElementById('url').addEventListener('input', async function(e) {
         const val = e.target.value;
-        const match = val.match(/(?:youtu\.be\/|youtube\.com\/(?:.*v=|.*\/))([^&?]+)/);
+        const match = val.match(/(?:youtu\\.be\\/|youtube\\.com\\/(?:.*v=|.*\\/))([^&?]+)/);
         if(match && match[1]) {
             loadedUrl = val;
             loadVideo(match[1]);
