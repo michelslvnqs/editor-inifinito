@@ -164,8 +164,24 @@ def on_error(ws, error):
 def on_close(ws, close_status_code, close_msg):
     print("WebSocket Fechado.")
 
+def check_pending_jobs():
+    try:
+        req = urllib.request.Request(f"{WORKER_URL}/api/queue/next", method='GET')
+        req.add_header('User-Agent', 'Mozilla/5.0')
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.getcode() == 200:
+                data = json.loads(response.read().decode('utf-8'))
+                if data and 'job_id' in data:
+                    print(f"Encontrado job pendente na fila ao conectar: {data['job_id']}")
+                    import threading
+                    threading.Thread(target=process_job, args=(data,)).start()
+    except Exception as e:
+        pass
+
 def on_open(ws):
     print(f"Conectado ao WebSocket Orquestrador ({WORKER_URL.replace('http', 'ws')}/api/ws)!")
+    import threading
+    threading.Thread(target=check_pending_jobs).start()
 
 def main():
     print("Iniciando Operador Orquestrador Modular com WebSockets...")

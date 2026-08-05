@@ -93,11 +93,24 @@ export default {
                 ).bind(job_id).first();
 
                 if (row) {
-                    return new Response(JSON.stringify({
-                        job_id,
-                        status: row.status,
-                        r2_url: row.status === 'concluido' ? `${url.origin}/downloads/${job_id}` : null
-                    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                    if (row.status === 'concluido') {
+                        return new Response(JSON.stringify({
+                            job_id,
+                            status: row.status,
+                            r2_url: `${url.origin}/downloads/${job_id}`
+                        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                    }
+
+                    // Se não estiver concluído, reseta para 'pendente' e notifica o operador novamente
+                    await env.editor_jobs.prepare(
+                        "UPDATE cuts SET status = 'pendente', error_msg = NULL WHERE job_id = ?"
+                    ).bind(job_id).run();
+
+                    ctx.waitUntil(notifyDO({ type: "new_job", job_id, youtube_id, start_ms, end_ms, subtitle_lang }));
+
+                    return new Response(JSON.stringify({ job_id, status: "pendente" }), {
+                        headers: { ...corsHeaders, "Content-Type": "application/json" },
+                    });
                 }
 
                 // Novo pedido de corte
