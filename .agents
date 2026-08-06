@@ -1,4 +1,4 @@
-# Regras do Agente para o projeto editor-infinito
+# Regras do Agente para o projeto infinito-video
 
 Sempre que os arquivos principais deste projeto forem editados, você DEVE, obrigatoriamente, seguir estes dois passos:
 1. Fazer o commit local das alterações no Git (ex: `git add <arquivos>` e `git commit -m "Sua mensagem"`).

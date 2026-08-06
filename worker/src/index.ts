@@ -245,7 +245,7 @@ const htmlInterface = `
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infinity Cuts | Premium</title>
+    <title>Infinito Video | Premium</title>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.7.1/nouislider.min.css">
     <style>
@@ -477,7 +477,7 @@ const htmlInterface = `
 <body>
 
 <div class="container">
-    <h1>Editor Infinito</h1>
+    <h1>Infinito Video</h1>
     <p class="subtitle">Cortes perfeitos, sem limites e na velocidade da luz.</p>
 
     <div id="form-area">
